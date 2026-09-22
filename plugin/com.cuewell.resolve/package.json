@@ -1,5 +1,6 @@
 {
   "name": "cuewell",
+  "productName": "Cuewell",
   "version": "1.0.0",
   "private": true,
   "description": "DaVinci Resolve Studio music library workflow integration.",

@@ -4,10 +4,14 @@ const { app, BrowserWindow, dialog, ipcMain, nativeImage, session, shell } = req
 const fs = require("fs");
 const path = require("path");
 const zlib = require("zlib");
+const { relaunchAsCuewell } = require("./lib/brand");
 const { createEngine, defaultDataDir } = require("./lib/engine");
 const { startServer } = require("./lib/server");
 
+relaunchAsCuewell();
+
 const PLUGIN_ID = "com.cuewell.resolve";
+app.setName("Cuewell");
 
 let WorkflowIntegration = null;
 let resolveObject = null;
@@ -39,6 +43,8 @@ async function getResolve() {
 }
 
 function createWindow(url) {
+  const icon = nativeImage.createFromPath(path.join(__dirname, "ui", "icon.png"));
+  if (process.platform === "darwin" && app.dock && !icon.isEmpty()) app.dock.setIcon(icon);
   mainWindow = new BrowserWindow({
     width: 1180,
     height: 820,
@@ -46,6 +52,7 @@ function createWindow(url) {
     minHeight: 620,
     backgroundColor: "#12110f",
     title: "Cuewell",
+    icon,
     webPreferences: {
       preload: path.join(__dirname, "preload.js"),
       contextIsolation: true,
