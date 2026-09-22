@@ -96,6 +96,7 @@ $("compareButton").addEventListener("click", () => {
   render();
 });
 $("licenseButton").addEventListener("click", () => current() && run("licenseTrack", { trackId: current().id }, "Saved to the license log."));
+$("audiioPageButton").addEventListener("click", () => current() && run("openAudiioPage", { id: current().id }, "Opened the Audiio page, where the official license form lives."));
 $("poolButton").addEventListener("click", () => place(true));
 $("placeButton").addEventListener("click", () => place(false));
 $("dragButton").addEventListener("click", dragCurrent);

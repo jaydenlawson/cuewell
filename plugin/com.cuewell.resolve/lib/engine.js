@@ -17,7 +17,7 @@ function defaultDataDir() {
   return path.join(os.homedir(), ".local", "share", "cuewell");
 }
 
-function createEngine({ dataDir = defaultDataDir(), resolve, audiioLogin, audiioLogout } = {}) {
+function createEngine({ dataDir = defaultDataDir(), resolve, audiioLogin, audiioLogout, openExternal } = {}) {
   fs.mkdirSync(dataDir, { recursive: true });
   const libraryPath = path.join(dataDir, "library.json");
   const sessionPath = path.join(dataDir, "session.json");
@@ -102,6 +102,8 @@ function createEngine({ dataDir = defaultDataDir(), resolve, audiioLogin, audiio
         return audiioMatch(payload.link || payload.text);
       case "audiioFavorite":
         return audiioFavorite(payload.id);
+      case "openAudiioPage":
+        return openAudiioPage(payload.id);
       case "generateDemo":
         return generateDemo();
       case "indexFolder":
@@ -532,6 +534,14 @@ function createEngine({ dataDir = defaultDataDir(), resolve, audiioLogin, audiio
     rememberAudiio(tracks, true);
     emit();
     return ok(publicState(), { trackIds: tracks.map((item) => item.id), explanation: "Audiio LinkMatch results for that link." });
+  }
+
+  async function openAudiioPage(id) {
+    const current = track(id);
+    if (!current || !current.pageUrl) return { ok: false, error: "This cue has no Audiio page." };
+    if (!openExternal) return { ok: false, error: current.pageUrl };
+    await openExternal(current.pageUrl);
+    return ok(publicState(), { url: current.pageUrl });
   }
 
   async function audiioFavorite(id) {

@@ -1,6 +1,6 @@
 "use strict";
 
-const { app, BrowserWindow, dialog, ipcMain, nativeImage, session } = require("electron");
+const { app, BrowserWindow, dialog, ipcMain, nativeImage, session, shell } = require("electron");
 const fs = require("fs");
 const path = require("path");
 const zlib = require("zlib");
@@ -253,6 +253,7 @@ app.whenReady().then(async () => {
     audiioLogout: async () => {
       await session.fromPartition("persist:cuewell-audiio").clearStorageData();
     },
+    openExternal: (url) => shell.openExternal(url),
   });
   const iconPath = path.join(engine.dataDir, "drag-icon.png");
   const dragIcon = writeDragIcon(iconPath);
