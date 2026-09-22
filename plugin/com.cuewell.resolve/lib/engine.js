@@ -32,6 +32,8 @@ function createEngine({ dataDir = defaultDataDir(), resolve, audiioLogin, audiio
   let audiioSession = loadJson(audiioPath, {});
   let audiioCache = [];
   let audiioTracks = [];
+  let audiioFavoriteTracks = [];
+  let audiioLicenseTracks = [];
   let audiioTotal = 0;
   let audiioPage = 1;
 
@@ -57,6 +59,8 @@ function createEngine({ dataDir = defaultDataDir(), resolve, audiioLogin, audiio
       dataDir,
       account: audiioSession.account || null,
       audiioTracks,
+      audiioFavoriteTracks,
+      audiioLicenseTracks,
       audiioTotal,
       audiioPage,
     };
@@ -88,6 +92,8 @@ function createEngine({ dataDir = defaultDataDir(), resolve, audiioLogin, audiio
         return disconnectAudiio();
       case "audiioBrowse":
         return browseAudiio(payload);
+      case "audiioSync":
+        return syncAudiio();
       case "audiioFavorites":
         return loadAudiioFavorites(payload.page);
       case "audiioPlaylists":
@@ -433,8 +439,8 @@ function createEngine({ dataDir = defaultDataDir(), resolve, audiioLogin, audiio
     fs.writeFileSync(temporary, JSON.stringify(audiioSession, null, 2));
     fs.renameSync(temporary, audiioPath);
     emit();
-    const browse = await browseAudiio({ page: 1 });
-    return browse.ok ? browse : ok(publicState());
+    const synced = await syncAudiio();
+    return synced.ok ? synced : ok(publicState());
   }
 
   async function disconnectAudiio() {
@@ -444,6 +450,8 @@ function createEngine({ dataDir = defaultDataDir(), resolve, audiioLogin, audiio
     audiioSession = {};
     audiioCache = [];
     audiioTracks = [];
+    audiioFavoriteTracks = [];
+    audiioLicenseTracks = [];
     audiioTotal = 0;
     audiioPage = 1;
     fs.rmSync(audiioPath, { force: true });
@@ -462,14 +470,17 @@ function createEngine({ dataDir = defaultDataDir(), resolve, audiioLogin, audiio
 
   async function browseAudiio(payload) {
     const token = requireAudiio();
-    const result = await audiio.search({
+    const options = {
       term: payload.term || payload.query || "",
       genre: payload.genre || "",
       mood: payload.mood || "",
       sort: payload.sort || "",
       page: payload.page || 1,
       limit: payload.limit || 24,
-    }, token);
+    };
+    const result = payload.kind === "sfx"
+      ? await audiio.searchSfx(options, token)
+      : await audiio.search(options, token);
     rememberAudiio(result.tracks, true);
     audiioTotal = result.total;
     audiioPage = result.page;
@@ -477,18 +488,56 @@ function createEngine({ dataDir = defaultDataDir(), resolve, audiioLogin, audiio
     return ok(publicState(), { total: result.total, page: result.page, count: result.tracks.length });
   }
 
-  async function loadAudiioFavorites(page = 1) {
+  async function loadAudiioFavorites() {
     const token = requireAudiio();
-    const tracks = await audiio.favorites(token, page || 1);
-    rememberAudiio(tracks, true);
+    const music = await audiio.allFavorites(token, 0);
+    const effects = await audiio.allFavorites(token, 1);
+    const tracks = music.concat(effects);
+    audiioFavoriteTracks = tracks;
+    rememberAudiio(tracks, false);
     state.favorites = tracks.map((item) => item.id);
     save();
     return ok(publicState(), { count: tracks.length });
   }
 
+  async function loadAudiioLicenses() {
+    const token = requireAudiio();
+    const result = await audiio.licenses(token);
+    const tracks = result.licenses.map((item) => item.track).filter(Boolean);
+    audiioLicenseTracks = tracks;
+    rememberAudiio(tracks, false);
+    const local = state.licenses.filter((item) => item.source !== "audiio");
+    state.licenses = result.licenses.map(({ track, ...license }) => license).concat(local);
+    save();
+    return ok(publicState(), { count: result.total });
+  }
+
+  async function syncAudiio() {
+    const token = requireAudiio();
+    try {
+      const verified = await audiio.verify(token);
+      audiioSession.account = audiio.publicAccount(verified, audiioSession);
+      const temporary = `${audiioPath}.tmp`;
+      fs.writeFileSync(temporary, JSON.stringify(audiioSession, null, 2));
+      fs.renameSync(temporary, audiioPath);
+    } catch {
+      // Keep the saved account if verify is briefly unavailable.
+    }
+    const errors = [];
+    try { await browseAudiio({ page: 1 }); } catch (error) { errors.push(error.message); }
+    try { await loadAudiioPlaylists(); } catch (error) { errors.push(error.message); }
+    try { await loadAudiioFavorites(); } catch (error) { errors.push(error.message); }
+    try { await loadAudiioLicenses(); } catch (error) { errors.push(error.message); }
+    if (errors.length && !audiioTracks.length && !state.playlists.length && !state.licenses.length) {
+      return { ok: false, error: errors[0] };
+    }
+    return ok(publicState(), { warnings: errors });
+  }
+
   async function loadAudiioPlaylists() {
     const token = requireAudiio();
     const playlists = await audiio.userPlaylists(token, audiioSession.account.uuid);
+    const local = state.playlists.filter((playlist) => playlist.source !== "audiio");
     state.playlists = playlists.map((playlist) => ({
       id: playlist.id,
       name: playlist.name,
@@ -496,7 +545,7 @@ function createEngine({ dataDir = defaultDataDir(), resolve, audiioLogin, audiio
       trackIds: [],
       source: "audiio",
       createdAt: new Date().toISOString(),
-    }));
+    })).concat(local);
     save();
     return ok(publicState(), { count: playlists.length });
   }
@@ -547,7 +596,7 @@ function createEngine({ dataDir = defaultDataDir(), resolve, audiioLogin, audiio
   async function audiioFavorite(id) {
     const current = track(id);
     if (!current || !current.audiioId) return toggleFavorite(id);
-    await audiio.setFavorite(requireAudiio(), current.audiioId, false);
+    await audiio.setFavorite(requireAudiio(), current.audiioId, current.kind === "sfx");
     if (state.favorites.includes(id)) state.favorites = state.favorites.filter((item) => item !== id);
     else state.favorites.unshift(id);
     save();

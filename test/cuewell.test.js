@@ -97,6 +97,13 @@ test("audiio track mapping keeps preview, stems, and waveform", () => {
   assert.equal(track.peaks.length, 160);
   assert.equal(audiio.buildQuery({ term: "piano", genre: "ambient", page: 2 }), "page=2&limit=24&term=piano&genre=ambient");
   assert.equal(audiio.canDownloadMaster({ membership: { lifetime: true } }), true);
+  const account = audiio.publicAccount({ account: { id: 1, uuid: "u", first_name: "Ada", email: "a@b.c" }, memberships: { lifetime: true, lifetimeSFX: true } });
+  assert.equal(account.membership.lifetime, true);
+  assert.equal(account.membership.lifetimeSfx, true);
+  const effect = audiio.mapSfx({ id: 9, title: "Audiio_Whoosh1.wav", comment: "Whoosh 1", duration: 5, genre: "[\"Whoosh\"]" });
+  assert.equal(effect.title, "Whoosh 1");
+  assert.equal(effect.remoteUrl, "https://d2cx9kaw24fnh5.cloudfront.net/Audiio_Whoosh1.mp3");
+  assert.equal(effect.kind, "sfx");
   assert.equal(audiio.canDownloadMaster({ membership: {} }), false);
 });
 

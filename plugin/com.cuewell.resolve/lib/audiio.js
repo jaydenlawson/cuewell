@@ -149,7 +149,7 @@ async function refresh(accountId, refreshToken) {
 
 function publicAccount(payload, extra = {}) {
   const account = (payload && (payload.account || payload.user)) || payload || {};
-  const membership = account.membership || {};
+  const membership = (payload && payload.memberships) || account.membership || {};
   return {
     id: account.id || extra.accountId || null,
     uuid: account.uuid || extra.uuid || null,
@@ -157,8 +157,8 @@ function publicAccount(payload, extra = {}) {
     name: [account.first_name, account.last_name].filter(Boolean).join(" ") || account.name || account.email || "Audiio account",
     membership: {
       lifetime: Boolean(membership.lifetime),
-      pro: Boolean(membership.pro),
-      lifetimeSfx: Boolean(membership.lifetimeSFX),
+      pro: Boolean(membership.pro || membership.isPro),
+      lifetimeSfx: Boolean(membership.lifetimeSFX || membership.lifetimeSfx),
     },
   };
 }
@@ -204,15 +204,115 @@ async function playlistTracks(token, playlistId) {
   return mapList(data);
 }
 
+function mapSfx(raw) {
+  if (!raw || raw.id == null) return null;
+  const file = raw.title || "";
+  const base = file.replace(/\.[^/.]+$/, "");
+  let tags = [];
+  if (Array.isArray(raw.genre)) tags = raw.genre;
+  else if (typeof raw.genre === "string" && raw.genre) {
+    try {
+      const parsed = JSON.parse(raw.genre);
+      tags = Array.isArray(parsed) ? parsed : [raw.genre];
+    } catch {
+      tags = [raw.genre];
+    }
+  }
+  return {
+    id: `sfx:${raw.id}`,
+    source: "sfx",
+    kind: "sfx",
+    audiioId: raw.id,
+    title: raw.comment || base || "Sound effect",
+    artist: "Audiio SFX",
+    path: "",
+    remoteUrl: base ? `https://d2cx9kaw24fnh5.cloudfront.net/${base}.mp3` : "",
+    masterPath: file ? `https://d2t2ss1zux7287.cloudfront.net/${file}` : "",
+    duration: Number(raw.duration) || 0,
+    bpm: null,
+    key: "",
+    genres: tags.map((tag) => String(tag).toLowerCase()),
+    moods: [],
+    tags: ["sfx"],
+    vocals: false,
+    energy: null,
+    description: file,
+    license: "Covered only by your Audiio sound-effects membership.",
+    peaks: waveform(raw.json),
+    features: null,
+    stems: [],
+    thumbnail: "",
+    pageUrl: "https://audiio.com/sound-effects",
+    createdAt: raw.created_at || "",
+  };
+}
+
+async function searchSfx(options, token) {
+  const params = new URLSearchParams();
+  params.set("page", String(options.page || 1));
+  params.set("limit", String(Math.min(48, Math.max(1, options.limit || 24))));
+  if (options.term) params.set("search", String(options.term).trim());
+  const data = await api(`sfx/?${params.toString()}`, { token });
+  return {
+    tracks: (data.sfxTracks || []).map(mapSfx).filter(Boolean),
+    total: Number(data.total) || 0,
+    page: Number(data.page) || Number(options.page) || 1,
+  };
+}
+
+async function allFavorites(token, sfx = 0) {
+  const tracks = [];
+  let page = 1;
+  let total = Infinity;
+  while (tracks.length < total && page <= 20) {
+    const data = await api(`accounts/favorites?sfx=${sfx ? 1 : 0}&page=${page}`, { token });
+    const batch = (sfx ? (data.tracks || []).map(mapSfx) : mapList(data)).filter(Boolean);
+    total = Number(data.total) || tracks.length + batch.length;
+    tracks.push(...batch);
+    if (!batch.length) break;
+    page += 1;
+  }
+  return tracks;
+}
+
+function mapLicense(raw) {
+  const track = raw.track ? mapTrack(raw.track) : null;
+  return {
+    id: `audiio-license:${raw.id}`,
+    source: "audiio",
+    trackId: track ? track.id : "",
+    title: track ? track.title : `Track ${raw.track_id || ""}`.trim(),
+    artist: track ? track.artist : "",
+    project: raw.project || "",
+    note: raw.order_number ? `#${raw.order_number}` : "",
+    terms: raw.distribution || "",
+    createdAt: raw.purchase_date || "",
+    track,
+  };
+}
+
+async function licenses(token) {
+  const licenses = [];
+  let page = 1;
+  let total = Infinity;
+  while (licenses.length < total && page <= 8) {
+    const data = await api(`licenses?page=${page}&limit=50`, { token });
+    const batch = (data.licenses || []).map(mapLicense).filter((item) => item.title);
+    total = Number(data.meta && data.meta.totalLicenses) || licenses.length + batch.length;
+    licenses.push(...batch);
+    if (!batch.length) break;
+    page += 1;
+  }
+  return { licenses, total };
+}
+
 async function userPlaylists(token, uuid) {
-  const pathName = uuid
-    ? `playlists?isUserPlaylist=true&uuid=${encodeURIComponent(uuid)}`
-    : "playlists?isUserPlaylist=true";
-  const data = await api(pathName, { token });
-  const rows = Array.isArray(data) ? data : (data.playlists || data.userPlaylists || data.data || []);
+  if (!uuid) return [];
+  const data = await api(`playlists/user-playlist/${encodeURIComponent(uuid)}`, { token });
+  const rows = Array.isArray(data) ? data : (data.playlists || []);
   return rows.map((playlist) => ({
     id: String(playlist.uuid || playlist.id),
-    name: playlist.name || playlist.title || "Playlist",
+    name: playlist.title || playlist.name || "Playlist",
     uuid: playlist.uuid || "",
     audiioId: playlist.id,
   }));
@@ -244,7 +344,12 @@ module.exports = {
   search,
   setFavorite,
   similar,
+  allFavorites,
+  licenses,
+  mapLicense,
+  mapSfx,
   playlistTracks,
+  searchSfx,
   userPlaylists,
   verify,
   waveform,
