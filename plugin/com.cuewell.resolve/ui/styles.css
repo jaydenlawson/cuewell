@@ -118,7 +118,8 @@ footer {
 .wave-wrap { min-width: 0; }
 canvas { width: 100%; background: #100e0c; border-radius: 10px; display: block; cursor: ew-resize; }
 #waveB { margin-top: 6px; }
-.player-actions { grid-column: 1 / -1; }
+.player-actions, #stems { grid-column: 1 / -1; }
+footer { grid-template-columns: 280px 1fr; }
 
 dialog {
   width: min(560px, calc(100% - 24px));

@@ -1,6 +1,6 @@
 "use strict";
 
-const { app, BrowserWindow, dialog, ipcMain, nativeImage } = require("electron");
+const { app, BrowserWindow, dialog, ipcMain, nativeImage, session } = require("electron");
 const fs = require("fs");
 const path = require("path");
 const zlib = require("zlib");
@@ -153,13 +153,15 @@ async function placeOnTimeline(request) {
   } catch {
     // Use the timeline frame rate.
   }
-  const placed = await mediaPool.AppendToTimeline([{
+  const clipInfo = {
     mediaPoolItem: clips[0],
     startFrame: Math.max(0, Math.round(request.startSec * clipFps)),
     endFrame: Math.max(1, Math.round(request.endSec * clipFps)),
     mediaType: 2,
     recordFrame,
-  }]);
+  };
+  if (request.audioTrack) clipInfo.trackIndex = request.audioTrack;
+  const placed = await mediaPool.AppendToTimeline([clipInfo]);
   if (!asArray(placed).some(Boolean)) {
     return { ok: true, message: `Added “${request.title}” to the Cuewell bin. Drag it from Cuewell if the timeline did not accept it.` };
   }
@@ -198,6 +200,45 @@ function tcToFrames(timecode, fps) {
   return total;
 }
 
+function audiioLogin() {
+  return new Promise((resolve) => {
+    const partition = "persist:cuewell-audiio";
+    const audiioSession = session.fromPartition(partition);
+    const win = new BrowserWindow({
+      width: 1040,
+      height: 840,
+      title: "Sign in to Audiio",
+      parent: mainWindow || undefined,
+      webPreferences: { partition, nodeIntegration: false, contextIsolation: true },
+    });
+    let settled = false;
+    const finish = (value) => {
+      if (settled) return;
+      settled = true;
+      clearInterval(timer);
+      if (!win.isDestroyed()) win.close();
+      resolve(value);
+    };
+    const timer = setInterval(async () => {
+      try {
+        const cookies = await audiioSession.cookies.get({ url: "https://audiio.com" });
+        const cookie = cookies.find((item) => item.name === "auth_web_token");
+        if (!cookie || !cookie.value) return;
+        const extra = await win.webContents.executeJavaScript(`(() => {
+          let userId = null;
+          try { userId = JSON.parse(localStorage.getItem("player-storage") || "{}").state?.userId || null; } catch (error) {}
+          return { refreshToken: localStorage.getItem("refreshToken"), accountId: userId };
+        })()`);
+        finish({ token: cookie.value, refreshToken: extra && extra.refreshToken, accountId: extra && extra.accountId });
+      } catch {
+        // The page is still loading.
+      }
+    }, 1000);
+    win.on("closed", () => finish(null));
+    win.loadURL("https://audiio.com/account/login");
+  });
+}
+
 app.whenReady().then(async () => {
   ensureWorkflowNode();
   try {
@@ -205,7 +246,14 @@ app.whenReady().then(async () => {
   } catch (error) {
     console.error("WorkflowIntegration.node is unavailable:", error.message);
   }
-  engine = createEngine({ dataDir: defaultDataDir(), resolve: resolveAdapter });
+  engine = createEngine({
+    dataDir: defaultDataDir(),
+    resolve: resolveAdapter,
+    audiioLogin,
+    audiioLogout: async () => {
+      await session.fromPartition("persist:cuewell-audiio").clearStorageData();
+    },
+  });
   const iconPath = path.join(engine.dataDir, "drag-icon.png");
   const dragIcon = writeDragIcon(iconPath);
   const server = await startServer(engine, { port: 47321 });

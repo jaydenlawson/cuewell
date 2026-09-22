@@ -5,6 +5,7 @@ const fs = require("fs");
 const os = require("os");
 const path = require("path");
 const test = require("node:test");
+const audiio = require("../plugin/com.cuewell.resolve/lib/audiio");
 const catalog = require("../plugin/com.cuewell.resolve/lib/catalog");
 const audio = require("../plugin/com.cuewell.resolve/lib/audio");
 const { createEngine, isPublicHttp } = require("../plugin/com.cuewell.resolve/lib/engine");
@@ -67,6 +68,43 @@ test("mp4 duration reads mvhd", () => {
   size.writeUInt32BE(8 + body.length, 0);
   const atom = Buffer.concat([size, Buffer.from("mvhd"), body]);
   assert.equal(audio.mp4Duration(atom), 2.5);
+});
+
+test("audiio track mapping keeps preview, stems, and waveform", () => {
+  const peaks = Buffer.from(JSON.stringify([0, 0.25, 0.5, 1]));
+  const track = audiio.mapTrack({
+    id: 5,
+    title: "Example",
+    bpm: 90,
+    duration: 12,
+    vocal_none: true,
+    musical_key: "aminor",
+    song: "https://example.test/preview.mp3",
+    sound_pro: "/example.wav",
+    genres: ["ambient"],
+    mood_calm: true,
+    json: { type: "Buffer", data: [...peaks] },
+    artist: { name: "Ada", slug: "ada" },
+    album: { slug: "record", title: "Record" },
+    slug: "example",
+    stems: [{ type: "drums", label: "Drums", url: "https://example.test/drums.mp3" }, { type: "fullMix", url: "https://example.test/mix.mp3" }],
+  });
+  assert.equal(track.id, "audiio:5");
+  assert.equal(track.remoteUrl, "https://example.test/preview.mp3");
+  assert.equal(track.vocals, false);
+  assert.deepEqual(track.moods, ["calm"]);
+  assert.deepEqual(track.stems.map((stem) => stem.type), ["drums"]);
+  assert.equal(track.peaks.length, 160);
+  assert.equal(audiio.buildQuery({ term: "piano", genre: "ambient", page: 2 }), "page=2&limit=24&term=piano&genre=ambient");
+  assert.equal(audiio.canDownloadMaster({ membership: { lifetime: true } }), true);
+  assert.equal(audiio.canDownloadMaster({ membership: {} }), false);
+});
+
+test("audiio catalog search returns playable cues", { timeout: 30000 }, async () => {
+  const result = await audiio.search({ term: "piano", page: 1, limit: 2 });
+  assert.ok(result.tracks.length > 0);
+  assert.match(result.tracks[0].remoteUrl, /^https:\/\//);
+  assert.equal(result.tracks[0].source, "audiio");
 });
 
 test("private reference links are refused", () => {

@@ -1,18 +1,20 @@
 # Cuewell
 
-Cuewell is a DaVinci Resolve Studio panel for browsing a music library, previewing it, and laying it onto the timeline without leaving the edit.
+Cuewell is a DaVinci Resolve Studio panel for browsing your Audiio catalog, previewing it, and laying it onto the timeline without leaving the edit.
 
-It is an independent project. It is not Audiio, it does not log into an Audiio account, and it does not include Audiio's catalog. The demo cues are original synthesis and are free to use. Music you index yourself has to be music you already have the right to use.
+Sign in inside the panel. Cuewell opens Audiio’s own login page, then uses that session for search, preview, stems, favorites, playlists, similar cues, Hans search, and LinkMatch. The password stays on Audiio’s page and is not saved in this repo. Full WAV download is offered only when that account’s membership includes it. A license is still created on Audiio; placing a cue also keeps a local project log.
+
+My files is a separate local library, including the original demo cues, for music that is not in the Audiio account.
 
 The workflow matches the features listed on the [Audiio lifetime plugin](https://audiio.com/lifetime-plugin) page:
 
 | Listed feature | Cuewell |
 | --- | --- |
-| Jump back in. Favorites, playlists, and licensed songs stay synced across the plugin, web, and mobile. | One library file shared by the Resolve panel and the same page in a browser. Open the sync link on a phone on your network. |
-| Search and import. Preview, compare, and license a cue, then drop it on the timeline. | Waveform preview, A/B compare, a project license log, media-pool import, place-at-playhead, and drag onto the timeline. |
-| Search and filter the catalog the way you would on the website. | Text search plus genre, mood, vocals, key, BPM, duration, and energy. |
-| Music browsing, favorites, playlists, and instant timeline import for the whole library. | Index any folder of wav, aiff, mp3, m4a, flac, or ogg. Favorites and playlists are saved in the library. |
-| AI tools inside the plugin. | On this machine, with no account and no credits: describe a scene, find similar cues, or match a public YouTube/Spotify title or a local reference file. Reference links use the public title only. The audio is not downloaded. |
+| Jump back in. Favorites, playlists, and licensed songs stay synced across the plugin, web, and mobile. | Favorites and playlists are loaded from the signed-in Audiio account. |
+| Search and import. Preview, compare, and license a cue, then drop it on the timeline. | Search and preview the Audiio catalog, compare two cues, then place the mix, a stem, or the full WAV on the timeline. |
+| Search and filter the catalog the way you would on the website. | Text, genre, and mood go to Audiio. Vocals, BPM, and length narrow the current page. |
+| Music browsing, favorites, playlists, and instant timeline import for the whole library. | The signed-in account’s catalog, favorites, and playlists. Stems can be previewed and placed. |
+| AI tools inside the plugin. | Similar, Hans search, and LinkMatch use the Audiio account. Audiio still decides whether that account has AI access. |
 
 Their sales page also lists Premiere Pro. This repository is the Resolve plugin.
 
@@ -58,11 +60,11 @@ The plugin is copied to:
 
 ## Use
 
-1. Choose **Load demo library**, or **Index a folder** of your own music.
-2. Search or open **Filters**. **Ask** ranks the library from a sentence such as "slow sad piano, no vocals". **Similar** uses tempo, energy, and the sound of the file. **Match** takes a description, a public YouTube or Spotify link, or a local audio file.
-3. Drag across the waveform to choose a region. **Place at playhead** imports that region as audio-only at the timeline playhead and files the clip in a **Cuewell** bin. **Drag** also hands the file to Resolve's timeline.
-4. **License** records the cue, the open project's name, and the cue's terms. Download the CSV from **Sync**.
-5. **Sync** shows a localhost link. Turn on network access to open the same library on a phone. The link is a password. Turn it off when you are done.
+1. Open Cuewell and choose **Sign in**. Log in on the Audiio page. The panel closes that window when the Audiio session cookie is set.
+2. Search, filter by genre and mood, and preview. Stems are the row under the waveform. **Place at playhead** downloads the cue into the Cuewell bin and drops it on the timeline. **Place full WAV** appears for lifetime and Pro memberships.
+3. **Favorites**, **Playlists**, **Similar**, **Ask**, and **Match** call the same Audiio account endpoints as the website. Ask is Hans search. Match sends a public link to LinkMatch. Those tools use your account’s AI access, so Audiio can still refuse them if the account has no credits.
+4. Drag across the waveform to choose a region. **License** writes a local project log. Creating the official Audiio license still happens on Audiio, because their form requires their own check.
+5. **Sync** shows a localhost link for this panel. Turn on network access only if you want the same page on a phone. The link is a password. Turn it off when you are done.
 
 A wav or aiff gets a real waveform, tempo estimate, and similar-sound match. Other formats still play, filter, and import. Put a `song.cuewell.json` file next to a song to set title, artist, genres, moods, tags, bpm, vocals, or license. You can also edit those fields in the panel.
 
@@ -80,7 +82,7 @@ Pointing that folder at Dropbox or iCloud is how a second computer picks up the 
 npm start
 ```
 
-Timeline buttons need the Resolve panel. Search, preview, favorites, playlists, and the license log work in the browser.
+Sign-in opens Audiio’s login page from the Resolve panel, so use that panel for the account. `npm start` only serves the local library.
 
 ## Tests
 

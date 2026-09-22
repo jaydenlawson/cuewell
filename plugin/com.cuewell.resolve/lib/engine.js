@@ -6,6 +6,7 @@ const os = require("os");
 const path = require("path");
 const catalog = require("./catalog");
 const audio = require("./audio");
+const audiio = require("./audiio");
 
 function defaultDataDir() {
   if (process.env.CUEWELL_DATA) return process.env.CUEWELL_DATA;
@@ -16,7 +17,7 @@ function defaultDataDir() {
   return path.join(os.homedir(), ".local", "share", "cuewell");
 }
 
-function createEngine({ dataDir = defaultDataDir(), resolve } = {}) {
+function createEngine({ dataDir = defaultDataDir(), resolve, audiioLogin, audiioLogout } = {}) {
   fs.mkdirSync(dataDir, { recursive: true });
   const libraryPath = path.join(dataDir, "library.json");
   const sessionPath = path.join(dataDir, "session.json");
@@ -27,6 +28,12 @@ function createEngine({ dataDir = defaultDataDir(), resolve } = {}) {
     writeJson(sessionPath, session);
   }
   const listeners = new Set();
+  const audiioPath = path.join(dataDir, "audiio-session.json");
+  let audiioSession = loadJson(audiioPath, {});
+  let audiioCache = [];
+  let audiioTracks = [];
+  let audiioTotal = 0;
+  let audiioPage = 1;
 
   function emit() {
     for (const listener of listeners) listener();
@@ -48,17 +55,53 @@ function createEngine({ dataDir = defaultDataDir(), resolve } = {}) {
       licenses: state.licenses,
       lan: state.lan,
       dataDir,
+      account: audiioSession.account || null,
+      audiioTracks,
+      audiioTotal,
+      audiioPage,
     };
   }
 
+  function rememberAudiio(tracks, replacePage) {
+    const byId = new Map(audiioCache.map((item) => [item.id, item]));
+    for (const item of tracks || []) {
+      if (item && item.id) byId.set(item.id, item);
+    }
+    audiioCache = [...byId.values()].slice(-400);
+    if (replacePage) audiioTracks = tracks || [];
+  }
+
   function track(id) {
-    return state.tracks.find((item) => item.id === id) || null;
+    return state.tracks.find((item) => item.id === id)
+      || audiioCache.find((item) => item.id === id)
+      || audiioTracks.find((item) => item.id === id)
+      || null;
   }
 
   async function handle(name, payload = {}) {
     switch (name) {
       case "state":
         return ok(await withProject(publicState()));
+      case "audiioLogin":
+        return connectAudiio();
+      case "audiioLogout":
+        return disconnectAudiio();
+      case "audiioBrowse":
+        return browseAudiio(payload);
+      case "audiioFavorites":
+        return loadAudiioFavorites(payload.page);
+      case "audiioPlaylists":
+        return loadAudiioPlaylists();
+      case "audiioPlaylistTracks":
+        return loadAudiioPlaylistTracks(payload.id);
+      case "audiioSimilar":
+        return audiioSimilar(payload.id);
+      case "audiioAsk":
+        return audiioAsk(payload.prompt);
+      case "audiioMatch":
+        return audiioMatch(payload.link || payload.text);
+      case "audiioFavorite":
+        return audiioFavorite(payload.id);
       case "generateDemo":
         return generateDemo();
       case "indexFolder":
@@ -297,7 +340,8 @@ function createEngine({ dataDir = defaultDataDir(), resolve } = {}) {
   async function place(payload) {
     const current = track(payload.trackId);
     if (!current) return { ok: false, error: "Track not found." };
-    if (!fs.existsSync(current.path)) return { ok: false, error: "The audio file is missing from disk." };
+    const localPath = await ensureLocalAudio(current, payload);
+    if (!localPath) return { ok: false, error: "Could not download that Audiio cue." };
     const startSec = Math.max(0, Number(payload.startSec) || 0);
     const endSec = Math.min(current.duration || startSec + 0.25, Number(payload.endSec) || current.duration || startSec + 0.25);
     if (endSec - startSec < 0.05) return { ok: false, error: "Select a longer region." };
@@ -305,11 +349,12 @@ function createEngine({ dataDir = defaultDataDir(), resolve } = {}) {
       return { ok: false, error: "Open Cuewell from Workspace > Workflow Integrations inside DaVinci Resolve Studio to place audio on the timeline." };
     }
     const result = await resolve.place({
-      path: current.path,
-      title: current.title,
+      path: localPath,
+      title: payload.stem ? `${current.title} (${payload.stem})` : current.title,
       startSec,
       endSec,
       poolOnly: Boolean(payload.poolOnly),
+      audioTrack: payload.audioTrack || 0,
     });
     if (!result || result.ok === false) {
       return { ok: false, error: (result && (result.error || result.message)) || "Resolve did not place that cue.", state: await withProject(publicState()) };
@@ -347,6 +392,175 @@ function createEngine({ dataDir = defaultDataDir(), resolve } = {}) {
       understood: ranked.understood,
       trackIds: ranked.results.slice(0, 12).map((row) => row.track.id),
     });
+  }
+
+  async function connectAudiio() {
+    if (!audiioLogin) {
+      return { ok: false, error: "Sign in from the Resolve panel. Cuewell opens Audiio’s own login page there." };
+    }
+    const login = await audiioLogin();
+    if (!login || !login.token) return { ok: false, error: "Sign-in was closed before Audiio set a session." };
+    try {
+      return await adoptAudiioSession(login);
+    } catch (error) {
+      return { ok: false, error: error.message || "Audiio rejected that session." };
+    }
+  }
+
+  async function adoptAudiioSession(login) {
+    let token = login.token;
+    let verified = null;
+    try {
+      verified = await audiio.verify(token);
+    } catch (error) {
+      if (login.refreshToken && login.accountId) {
+        const refreshed = await audiio.refresh(login.accountId, login.refreshToken);
+        token = refreshed.token || token;
+        verified = await audiio.verify(token);
+      } else {
+        throw error;
+      }
+    }
+    audiioSession = {
+      token,
+      refreshToken: login.refreshToken || audiioSession.refreshToken || "",
+      accountId: login.accountId || null,
+      account: audiio.publicAccount(verified, login),
+    };
+    const temporary = `${audiioPath}.tmp`;
+    fs.writeFileSync(temporary, JSON.stringify(audiioSession, null, 2));
+    fs.renameSync(temporary, audiioPath);
+    emit();
+    const browse = await browseAudiio({ page: 1 });
+    return browse.ok ? browse : ok(publicState());
+  }
+
+  async function disconnectAudiio() {
+    if (audiioLogout) {
+      try { await audiioLogout(); } catch { /* the local session is still removed */ }
+    }
+    audiioSession = {};
+    audiioCache = [];
+    audiioTracks = [];
+    audiioTotal = 0;
+    audiioPage = 1;
+    fs.rmSync(audiioPath, { force: true });
+    emit();
+    return ok(publicState());
+  }
+
+  function requireAudiio() {
+    if (!audiioSession.token || !audiioSession.account) {
+      const error = new Error("Sign in to Audiio first.");
+      error.status = 401;
+      throw error;
+    }
+    return audiioSession.token;
+  }
+
+  async function browseAudiio(payload) {
+    const token = requireAudiio();
+    const result = await audiio.search({
+      term: payload.term || payload.query || "",
+      genre: payload.genre || "",
+      mood: payload.mood || "",
+      sort: payload.sort || "",
+      page: payload.page || 1,
+      limit: payload.limit || 24,
+    }, token);
+    rememberAudiio(result.tracks, true);
+    audiioTotal = result.total;
+    audiioPage = result.page;
+    emit();
+    return ok(publicState(), { total: result.total, page: result.page, count: result.tracks.length });
+  }
+
+  async function loadAudiioFavorites(page = 1) {
+    const token = requireAudiio();
+    const tracks = await audiio.favorites(token, page || 1);
+    rememberAudiio(tracks, true);
+    state.favorites = tracks.map((item) => item.id);
+    save();
+    return ok(publicState(), { count: tracks.length });
+  }
+
+  async function loadAudiioPlaylists() {
+    const token = requireAudiio();
+    const playlists = await audiio.userPlaylists(token, audiioSession.account.uuid);
+    state.playlists = playlists.map((playlist) => ({
+      id: playlist.id,
+      name: playlist.name,
+      audiioId: playlist.audiioId,
+      trackIds: [],
+      source: "audiio",
+      createdAt: new Date().toISOString(),
+    }));
+    save();
+    return ok(publicState(), { count: playlists.length });
+  }
+
+  async function loadAudiioPlaylistTracks(id) {
+    const playlist = state.playlists.find((item) => item.id === id);
+    if (!playlist || !playlist.audiioId) return { ok: false, error: "That is not an Audiio playlist." };
+    const tracks = await audiio.playlistTracks(requireAudiio(), playlist.audiioId);
+    rememberAudiio(tracks, true);
+    playlist.trackIds = tracks.map((item) => item.id);
+    save();
+    return ok(publicState(), { count: tracks.length });
+  }
+
+  async function audiioSimilar(id) {
+    const current = track(id);
+    if (!current || !current.audiioId) return { ok: false, error: "Choose an Audiio cue first." };
+    const tracks = await audiio.similar(current.audiioId, requireAudiio());
+    rememberAudiio(tracks, true);
+    emit();
+    return ok(publicState(), { trackIds: tracks.map((item) => item.id) });
+  }
+
+  async function audiioAsk(prompt) {
+    if (!String(prompt || "").trim()) return { ok: false, error: "Describe the cue you want." };
+    const tracks = await audiio.ask(String(prompt).trim(), requireAudiio());
+    rememberAudiio(tracks, true);
+    emit();
+    return ok(publicState(), { trackIds: tracks.map((item) => item.id), count: tracks.length });
+  }
+
+  async function audiioMatch(link) {
+    if (!String(link || "").trim()) return { ok: false, error: "Paste a reference link." };
+    const tracks = await audiio.matchLink(String(link).trim(), requireAudiio());
+    rememberAudiio(tracks, true);
+    emit();
+    return ok(publicState(), { trackIds: tracks.map((item) => item.id), explanation: "Audiio LinkMatch results for that link." });
+  }
+
+  async function audiioFavorite(id) {
+    const current = track(id);
+    if (!current || !current.audiioId) return toggleFavorite(id);
+    await audiio.setFavorite(requireAudiio(), current.audiioId, false);
+    if (state.favorites.includes(id)) state.favorites = state.favorites.filter((item) => item !== id);
+    else state.favorites.unshift(id);
+    save();
+    return ok(publicState(), { favorite: state.favorites.includes(id) });
+  }
+
+  async function ensureLocalAudio(current, payload) {
+    if (current.path && fs.existsSync(current.path)) return current.path;
+    const stem = (current.stems || []).find((item) => item.type === payload.stem);
+    let url = stem ? stem.url : current.remoteUrl;
+    let suffix = stem ? stem.type : "mix";
+    if (payload.master) {
+      if (!audiio.canDownloadMaster(audiioSession.account)) {
+        throw new Error("Full WAV download is available when the signed-in Audiio account includes it. This session can place the preview mix.");
+      }
+      url = audiio.masterUrl(current);
+      suffix = "wav";
+    }
+    if (!url) return "";
+    const extension = payload.master ? "wav" : "mp3";
+    const file = path.join(dataDir, "cache", `${current.audiioId || "cue"}-${suffix}.${extension}`);
+    if (!fs.existsSync(file)) await audiio.cacheDownload(url, file);
+    return file;
   }
 
   function replace(next) {

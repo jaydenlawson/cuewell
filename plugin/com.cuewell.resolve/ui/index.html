@@ -11,7 +11,7 @@
     <header>
       <div class="brand">
         <span class="mark">Cuewell</span>
-        <span class="tag">Music library for Resolve</span>
+        <span class="tag" id="accountTag">Sign in with your Audiio account</span>
       </div>
       <label class="search">
         <span class="sr">Search</span>
@@ -21,6 +21,8 @@
         <button type="button" id="openFilters" class="ghost">Filters</button>
         <button type="button" id="openAsk" class="ghost">Ask</button>
         <button type="button" id="openMatch" class="ghost">Match</button>
+        <button type="button" id="signIn">Sign in</button>
+        <button type="button" id="signOut" class="ghost hidden">Sign out</button>
         <button type="button" id="openSync" class="ghost">Sync</button>
       </div>
     </header>
@@ -32,6 +34,7 @@
         <button type="button" data-view="favorites" class="nav">Favorites <em id="countFavorites"></em></button>
         <button type="button" data-view="playlists" class="nav">Playlists <em id="countPlaylists"></em></button>
         <button type="button" data-view="licensed" class="nav">Licensed <em id="countLicensed"></em></button>
+        <button type="button" data-view="files" class="nav">My files</button>
         <div id="playlistNav" class="playlist-nav"></div>
         <div class="nav-tools">
           <button type="button" id="demoButton">Load demo library</button>
@@ -60,6 +63,7 @@
         <canvas id="wave" height="64"></canvas>
         <canvas id="waveB" height="46" class="hidden"></canvas>
       </div>
+      <div id="stems" class="chip-row"></div>
       <div class="player-actions">
         <button type="button" id="favoriteButton" class="ghost">Favorite</button>
         <button type="button" id="similarButton" class="ghost">Similar</button>
@@ -67,6 +71,8 @@
         <button type="button" id="licenseButton" class="ghost">License</button>
         <button type="button" id="poolButton" class="ghost">Media pool</button>
         <button type="button" id="placeButton">Place at playhead</button>
+        <button type="button" id="wavButton" class="ghost hidden">Place full WAV</button>
+        <button type="button" id="moreButton" class="ghost">Next page</button>
         <button type="button" id="dragButton" class="ghost">Drag</button>
         <button type="button" id="editButton" class="ghost">Edit</button>
       </div>

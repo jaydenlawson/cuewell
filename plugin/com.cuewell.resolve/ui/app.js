@@ -29,6 +29,8 @@ const ui = {
   promptResults: [],
   matchIds: null,
   similarIds: null,
+  page: 1,
+  stem: null,
 };
 
 const $ = (id) => document.getElementById(id);
@@ -42,15 +44,28 @@ document.querySelectorAll(".nav").forEach((button) => {
     ui.view = button.dataset.view;
     ui.playlistId = null;
     ui.similarIds = null;
-    render();
+    ui.page = 1;
+    if (state && state.account && ui.view === "favorites") run("audiioFavorites", {});
+    else if (state && state.account && ui.view === "playlists") run("audiioPlaylists", {});
+    else if (state && state.account && ui.view === "library") scheduleBrowse();
+    else render();
   });
 });
 
 $("query").addEventListener("input", () => {
   ui.query = $("query").value;
-  if (ui.view === "home") ui.view = "library";
-  render();
+  ui.page = 1;
+  if (ui.view === "home" || ui.view === "files") ui.view = state && state.account ? "library" : "files";
+  if (state && state.account) scheduleBrowse();
+  else render();
 });
+$("signIn").addEventListener("click", () => run("audiioLogin", {}, (body) => `Signed in as ${body.state.account.name || body.state.account.email}.`));
+$("signOut").addEventListener("click", () => run("audiioLogout", {}, "Signed out of Audiio."));
+$("moreButton").addEventListener("click", () => {
+  ui.page += 1;
+  scheduleBrowse();
+});
+$("wavButton").addEventListener("click", () => place(false, { master: true }));
 $("openFilters").addEventListener("click", () => {
   $("filters").classList.toggle("hidden");
   if (!$("filters").classList.contains("hidden")) renderFilters();
@@ -68,7 +83,7 @@ $("folderPath").addEventListener("keydown", (event) => {
   if (event.key === "Enter" && event.target.value.trim()) run("indexFolder", { folder: event.target.value.trim() }, "Folder indexed.");
 });
 $("playButton").addEventListener("click", togglePlay);
-$("favoriteButton").addEventListener("click", () => current() && run("toggleFavorite", { id: current().id }));
+$("favoriteButton").addEventListener("click", () => current() && run(current().source === "audiio" ? "audiioFavorite" : "toggleFavorite", { id: current().id }));
 $("similarButton").addEventListener("click", showSimilar);
 $("compareButton").addEventListener("click", () => {
   if (!ui.compareId) {
@@ -124,6 +139,7 @@ async function boot() {
     return;
   }
   await refresh();
+  if (state && state.account) scheduleBrowse();
   const events = new EventSource(`/events?token=${encodeURIComponent(token)}`);
   events.onmessage = () => {
     clearTimeout(refreshTimer);
@@ -164,7 +180,13 @@ function authHeaders() {
 
 function render() {
   if (!state) return;
-  $("countLibrary").textContent = String(state.tracks.length);
+  $("countLibrary").textContent = String(state.account ? state.audiioTotal || (state.audiioTracks || []).length : state.tracks.length);
+  $("accountTag").textContent = state.account
+    ? `${state.account.name || state.account.email}${state.account.membership && state.account.membership.lifetime ? " · lifetime" : ""}`
+    : "Sign in with your Audiio account";
+  $("signIn").classList.toggle("hidden", Boolean(state.account));
+  $("signOut").classList.toggle("hidden", !state.account);
+  $("wavButton").classList.toggle("hidden", !(state.account && state.account.membership && (state.account.membership.lifetime || state.account.membership.pro)));
   $("countFavorites").textContent = String(state.favorites.length);
   $("countPlaylists").textContent = String(state.playlists.length);
   $("countLicensed").textContent = String(state.licenses.length);
@@ -185,7 +207,8 @@ function renderPlaylists() {
       ui.view = "playlist";
       ui.playlistId = playlist.id;
       ui.similarIds = null;
-      render();
+      if (playlist.source === "audiio") run("audiioPlaylistTracks", { id: playlist.id });
+      else render();
     });
     if (ui.playlistId === playlist.id) button.classList.add("active");
     nav.append(button);
@@ -196,8 +219,12 @@ function renderFilters() {
   const box = $("filters");
   if (box.classList.contains("hidden")) return;
   const catalog = window.CuewellCatalog;
-  const genres = catalog.uniqueSorted(state.tracks, "genres");
-  const moods = catalog.uniqueSorted(state.tracks, "moods");
+  const genres = state.account
+    ? ["acoustic", "ambient", "cinematic", "classical", "country", "electronic", "folk", "hiphop", "indie", "jazz", "lofi", "pop", "rock", "soul"]
+    : catalog.uniqueSorted(state.tracks, "genres");
+  const moods = state.account
+    ? ["calm", "chill", "epic", "happy", "hopeful", "romantic", "tense", "upbeat"]
+    : catalog.uniqueSorted(state.tracks, "moods");
   const keys = [...new Set(state.tracks.map((track) => track.key).filter(Boolean))].sort();
   box.replaceChildren();
   box.append(chipRow("Genres", genres, ui.genres, (value) => toggle(ui.genres, value)));
@@ -205,7 +232,12 @@ function renderFilters() {
   const grid = div("filter-grid");
   grid.append(selectField("Vocals", ["any", "vocals", "instrumental"], ui.vocals, (value) => { ui.vocals = value; render(); }));
   grid.append(selectField("Key", ["", ...keys], ui.key, (value) => { ui.key = value; render(); }));
-  grid.append(selectField("Sort", ["title", "match", "bpm", "duration", "energy"], ui.sort, (value) => { ui.sort = value; render(); }));
+  grid.append(selectField("Sort", ["title", "match", "bpm", "duration", "newest"], ui.sort, (value) => {
+    ui.sort = value;
+    ui.page = 1;
+    if (state.account && ui.view !== "files") scheduleBrowse();
+    else render();
+  }));
   grid.append(numberField("BPM min", ui.bpmMin, (value) => { ui.bpmMin = value; render(); }));
   grid.append(numberField("BPM max", ui.bpmMax, (value) => { ui.bpmMax = value; render(); }));
   grid.append(numberField("Seconds min", ui.durationMin, (value) => { ui.durationMin = value; render(); }));
@@ -219,8 +251,16 @@ function renderList() {
   const list = $("list");
   const status = $("status");
   list.replaceChildren();
-  if (!state.tracks.length) {
-    status.textContent = "No music yet. Load the original demo library, or index a folder of music you have the right to use.";
+  if (!state.account && ui.view !== "files" && !state.tracks.length) {
+    status.textContent = "Sign in to search your Audiio catalog. My files still holds a local library.";
+    return;
+  }
+  if (!state.account && ui.view !== "files") {
+    status.textContent = "Sign in to Audiio to search, preview, favorite, and place that catalog. My files is the local library.";
+  }
+  if (state.account && ui.view === "home" && !ui.query) {
+    status.textContent = `${state.account.name}. ${state.audiioTotal || 0} cues in the Audiio catalog.`;
+    list.append(homeBlock("From your Audiio catalog", state.audiioTracks || []));
     return;
   }
   if (ui.view === "home" && !ui.query && !ui.similarIds && !ui.matchIds) {
@@ -255,6 +295,11 @@ function renderList() {
   if (ui.view === "licensed") renderLicenses(list, state.licenses);
 }
 
+function catalogTracks() {
+  if (ui.view === "files" || !state.account) return state.tracks;
+  return state.audiioTracks || [];
+}
+
 function shownTracks() {
   const catalog = window.CuewellCatalog;
   if (ui.similarIds) return idsToTracks(ui.similarIds);
@@ -269,7 +314,7 @@ function shownTracks() {
     ids = playlist ? playlist.trackIds : [];
     order = ids;
   }
-  return catalog.searchTracks(state.tracks, {
+  return catalog.searchTracks(catalogTracks(), {
     query: ui.query,
     ids,
     order,
@@ -311,7 +356,7 @@ function trackRow(track) {
   text.append(p(`${track.artist} · ${formatTime(track.duration)} · ${track.bpm ? `${track.bpm} bpm` : "bpm unknown"} · ${track.key || "key unknown"} · ${(track.moods || []).slice(0, 2).join(", ") || "untagged"}`));
   const actions = div("row-actions");
   actions.append(buttonEl(track.id === ui.currentId && ui.playing ? "Pause" : "Preview", "ghost", () => preview(track.id)));
-  actions.append(buttonEl(state.favorites.includes(track.id) ? "Favorited" : "Favorite", "ghost", () => run("toggleFavorite", { id: track.id })));
+  actions.append(buttonEl(state.favorites.includes(track.id) ? "Favorited" : "Favorite", "ghost", () => run(track.source === "audiio" ? "audiioFavorite" : "toggleFavorite", { id: track.id })));
   actions.append(buttonEl("Similar", "ghost", () => { ui.currentId = track.id; showSimilar(); }));
   actions.append(buttonEl("Compare", "ghost", () => setCompare(track.id)));
   actions.append(buttonEl("License", "ghost", () => run("licenseTrack", { trackId: track.id }, "Saved to the license log.")));
@@ -378,6 +423,18 @@ function paintTransport() {
     $("nowMeta").textContent = `${regionText}${compareText}${track.artist}. ${track.license}`;
   }
   $("favoriteButton").textContent = track && state.favorites.includes(track.id) ? "Favorited" : "Favorite";
+  const stems = $("stems");
+  stems.replaceChildren();
+  if (track && track.stems && track.stems.length) {
+    stems.append(buttonEl("Full mix", ui.stem ? "" : "on", () => { ui.stem = null; reloadPreview(); }));
+    for (const stem of track.stems) {
+      const selected = ui.stem && ui.stem.trackId === track.id && ui.stem.type === stem.type;
+      stems.append(buttonEl(stem.label, selected ? "on" : "", () => {
+        ui.stem = { trackId: track.id, type: stem.type };
+        reloadPreview();
+      }));
+    }
+  }
   $("compareButton").textContent = ui.compareId ? "Clear compare" : "Compare";
   waveB.classList.toggle("hidden", !compare || compare.id === (track && track.id));
 }
@@ -427,12 +484,28 @@ function setCompare(id) {
 function showSimilar() {
   const track = current();
   if (!track) return;
+  if (track.source === "audiio") {
+    ui.similarIds = null;
+    ui.view = "library";
+    run("audiioSimilar", { id: track.id }, "Similar Audiio cues.");
+    return;
+  }
   ui.similarIds = window.CuewellCatalog.similarTracks(state.tracks, track.id, 12).map((row) => row.track.id);
-  ui.view = "library";
+  ui.view = "files";
   render();
 }
 
 function runAsk() {
+  if (state && state.account) {
+    run("audiioAsk", { prompt: $("prompt").value }, "Audiio search results.").then((body) => {
+      if (!body) return;
+      ui.view = "library";
+      ui.similarIds = null;
+      $("askDialog").close();
+      render();
+    });
+    return;
+  }
   const ranked = window.CuewellCatalog.rankByPrompt(state.tracks, $("prompt").value);
   ui.promptResults = ranked.results.map((row) => row.track);
   ui.view = "ask";
@@ -456,6 +529,15 @@ function saveAsk() {
 }
 
 async function runMatch(payload) {
+  if (state && state.account && payload.text && /^https?:\/\//i.test(payload.text)) {
+    const body = await run("audiioMatch", { link: payload.text });
+    if (!body) return;
+    ui.view = "library";
+    $("matchNote").textContent = (body.result && body.result.explanation) || "";
+    $("matchDialog").close();
+    render();
+    return;
+  }
   const body = await run("matchReference", payload);
   if (!body) return;
   ui.matchIds = body.result.trackIds;
@@ -489,11 +571,32 @@ async function indexFolder() {
   run("indexFolder", { folder }, (body) => `Indexed ${body.result.scanned} files, ${body.result.added} new.`);
 }
 
-function place(poolOnly) {
+function place(poolOnly, extra = {}) {
   const track = current();
   if (!track) return;
   const region = activeRegion(track);
-  run("place", { trackId: track.id, startSec: region.start, endSec: region.end, poolOnly }, (body) => body.result && body.result.message ? body.result.message : (poolOnly ? "Added to the media pool." : "Placed at the playhead."));
+  run("place", {
+    trackId: track.id,
+    startSec: region.start,
+    endSec: region.end,
+    poolOnly,
+    stem: ui.stem && ui.stem.trackId === track.id ? ui.stem.type : "",
+    master: Boolean(extra.master),
+  }, (body) => body.result && body.result.message ? body.result.message : (poolOnly ? "Added to the media pool." : "Placed at the playhead."));
+}
+
+let browseTimer = 0;
+function scheduleBrowse() {
+  clearTimeout(browseTimer);
+  browseTimer = setTimeout(() => {
+    run("audiioBrowse", {
+      query: ui.query,
+      genre: ui.genres[0] || "",
+      mood: ui.moods[0] || "",
+      sort: ui.sort === "title" || ui.sort === "match" ? "" : ui.sort,
+      page: ui.page,
+    });
+  }, 280);
 }
 
 function dragCurrent() {
@@ -656,7 +759,15 @@ function current() {
 }
 
 function trackById(id) {
-  return state && state.tracks.find((track) => track.id === id) || null;
+  if (!state) return null;
+  return state.tracks.find((track) => track.id === id) || (state.audiioTracks || []).find((track) => track.id === id) || null;
+}
+
+function reloadPreview() {
+  const track = current();
+  if (!track) return;
+  audio.src = mediaUrl(track.id);
+  audio.play().then(() => { ui.playing = true; paintTransport(); drawWaves(); }).catch(() => {});
 }
 
 function idsToTracks(ids) {
@@ -664,7 +775,8 @@ function idsToTracks(ids) {
 }
 
 function mediaUrl(id) {
-  return `/media/${encodeURIComponent(id)}?token=${encodeURIComponent(token)}`;
+  const stem = ui.stem && ui.stem.trackId === id ? `&stem=${encodeURIComponent(ui.stem.type)}` : "";
+  return `/media/${encodeURIComponent(id)}?token=${encodeURIComponent(token)}${stem}`;
 }
 
 function formatTime(seconds) {
@@ -682,7 +794,9 @@ function toggle(list, value) {
   const index = list.indexOf(value);
   if (index >= 0) list.splice(index, 1);
   else list.push(value);
-  render();
+  ui.page = 1;
+  if (state && state.account && ui.view !== "files") scheduleBrowse();
+  else render();
 }
 
 function chipRow(label, values, selected, onClick) {

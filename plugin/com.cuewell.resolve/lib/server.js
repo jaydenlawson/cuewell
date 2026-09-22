@@ -4,6 +4,7 @@ const fs = require("fs");
 const http = require("http");
 const os = require("os");
 const path = require("path");
+const { Readable } = require("stream");
 
 const ROOT = path.join(__dirname, "..");
 const FILES = {
@@ -170,6 +171,17 @@ function serveStatic(res, item) {
 
 function serveMedia(engine, id, req, res) {
   const track = engine.track(id);
+  const requestUrl = new URL(req.url, "http://127.0.0.1");
+  const stemType = requestUrl.searchParams.get("stem");
+  const stem = stemType && track && (track.stems || []).find((item) => item.type === stemType);
+  if (stem && stem.url) {
+    proxyRemote(stem.url, req, res);
+    return;
+  }
+  if (track && track.remoteUrl && !(track.path && fs.existsSync(track.path))) {
+    proxyRemote(track.remoteUrl, req, res);
+    return;
+  }
   if (!track || !track.path || !fs.existsSync(track.path)) {
     res.writeHead(404);
     res.end();
@@ -203,6 +215,30 @@ function serveMedia(engine, id, req, res) {
   }
   res.writeHead(200, { "content-type": type, "content-length": stat.size, "accept-ranges": "bytes" });
   fs.createReadStream(track.path).pipe(res);
+}
+
+function proxyRemote(url, req, res) {
+  const headers = { "user-agent": "Cuewell/1.0" };
+  if (req.headers.range) headers.range = req.headers.range;
+  fetch(url, { headers }).then((upstream) => {
+    const responseHeaders = {
+      "content-type": upstream.headers.get("content-type") || "audio/mpeg",
+      "accept-ranges": upstream.headers.get("accept-ranges") || "bytes",
+    };
+    const length = upstream.headers.get("content-length");
+    const range = upstream.headers.get("content-range");
+    if (length) responseHeaders["content-length"] = length;
+    if (range) responseHeaders["content-range"] = range;
+    res.writeHead(upstream.status, responseHeaders);
+    if (!upstream.body) {
+      res.end();
+      return;
+    }
+    Readable.fromWeb(upstream.body).pipe(res);
+  }).catch((error) => {
+    res.writeHead(502, { "content-type": "text/plain" });
+    res.end(error.message);
+  });
 }
 
 function mediaType(file) {
