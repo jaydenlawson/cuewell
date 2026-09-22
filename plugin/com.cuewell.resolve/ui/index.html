@@ -1,0 +1,146 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Cuewell</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div id="app">
+    <header>
+      <div class="brand">
+        <span class="mark">Cuewell</span>
+        <span class="tag">Music library for Resolve</span>
+      </div>
+      <label class="search">
+        <span class="sr">Search</span>
+        <input id="query" type="search" placeholder="Search title, mood, genre, key" autocomplete="off">
+      </label>
+      <div class="header-actions">
+        <button type="button" id="openFilters" class="ghost">Filters</button>
+        <button type="button" id="openAsk" class="ghost">Ask</button>
+        <button type="button" id="openMatch" class="ghost">Match</button>
+        <button type="button" id="openSync" class="ghost">Sync</button>
+      </div>
+    </header>
+
+    <div class="workspace">
+      <nav>
+        <button type="button" data-view="home" class="nav active">Jump back in</button>
+        <button type="button" data-view="library" class="nav">Library <em id="countLibrary"></em></button>
+        <button type="button" data-view="favorites" class="nav">Favorites <em id="countFavorites"></em></button>
+        <button type="button" data-view="playlists" class="nav">Playlists <em id="countPlaylists"></em></button>
+        <button type="button" data-view="licensed" class="nav">Licensed <em id="countLicensed"></em></button>
+        <div id="playlistNav" class="playlist-nav"></div>
+        <div class="nav-tools">
+          <button type="button" id="demoButton">Load demo library</button>
+          <button type="button" id="indexButton" class="ghost">Index a folder</button>
+          <input id="folderPath" type="text" placeholder="Or paste a folder path" spellcheck="false">
+          <button type="button" id="reindexButton" class="ghost">Reindex</button>
+        </div>
+      </nav>
+
+      <main>
+        <section id="filters" class="filters hidden"></section>
+        <section id="status" class="status"></section>
+        <section id="list"></section>
+      </main>
+    </div>
+
+    <footer id="player">
+      <div class="transport">
+        <button type="button" id="playButton" class="play">Play</button>
+        <div>
+          <strong id="nowTitle">Nothing playing</strong>
+          <p id="nowMeta">Preview a cue, compare two, then license it and drop it on the timeline.</p>
+        </div>
+      </div>
+      <div class="wave-wrap">
+        <canvas id="wave" height="64"></canvas>
+        <canvas id="waveB" height="46" class="hidden"></canvas>
+      </div>
+      <div class="player-actions">
+        <button type="button" id="favoriteButton" class="ghost">Favorite</button>
+        <button type="button" id="similarButton" class="ghost">Similar</button>
+        <button type="button" id="compareButton" class="ghost">Compare</button>
+        <button type="button" id="licenseButton" class="ghost">License</button>
+        <button type="button" id="poolButton" class="ghost">Media pool</button>
+        <button type="button" id="placeButton">Place at playhead</button>
+        <button type="button" id="dragButton" class="ghost">Drag</button>
+        <button type="button" id="editButton" class="ghost">Edit</button>
+      </div>
+    </footer>
+  </div>
+
+  <dialog id="askDialog">
+    <form method="dialog">
+      <h2>Ask for a cue</h2>
+      <p>Describe the scene. Cuewell ranks your library on this machine from mood, tempo, energy, and tags. No account and no credits.</p>
+      <textarea id="prompt" rows="4" placeholder="slow sad piano for a night scene, no vocals"></textarea>
+      <p id="askUnderstood" class="hint"></p>
+      <div class="dialog-actions">
+        <button type="button" id="askRun">Search</button>
+        <button type="button" id="askSave" class="ghost">Save as playlist</button>
+        <button type="submit" class="ghost" value="cancel">Close</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="matchDialog">
+    <form method="dialog">
+      <h2>Match a reference</h2>
+      <p>Paste a description, a YouTube or Spotify link, or choose a local audio file. Links are matched from the public title only. The audio is not downloaded.</p>
+      <input id="matchText" type="text" placeholder="https:// or a description">
+      <div class="dialog-actions">
+        <button type="button" id="matchRun">Match text or link</button>
+        <button type="button" id="matchFile" class="ghost">Match an audio file</button>
+        <button type="submit" class="ghost" value="cancel">Close</button>
+      </div>
+      <p id="matchNote" class="hint"></p>
+    </form>
+  </dialog>
+
+  <dialog id="syncDialog">
+    <form method="dialog">
+      <h2>Sync</h2>
+      <p>Favorites, playlists, and the license log live in one library file. This page is the web app. Open the link on your phone to keep the same library while you edit.</p>
+      <label class="check"><input id="lanToggle" type="checkbox"> Allow other devices on this network</label>
+      <p class="hint">Anyone with the link can browse this library and change favorites. Turn it off when you are done. Treat the link like a password.</p>
+      <div id="syncLinks"></div>
+      <div class="dialog-actions">
+        <button type="button" id="copyLink">Copy link</button>
+        <a id="csvLink" href="/licenses.csv">Download license CSV</a>
+        <button type="submit" class="ghost" value="cancel">Close</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="editDialog">
+    <form method="dialog">
+      <h2>Edit track</h2>
+      <label>Title <input id="editTitle" type="text"></label>
+      <label>Artist <input id="editArtist" type="text"></label>
+      <label>Genres <input id="editGenres" type="text" placeholder="ambient, cinematic"></label>
+      <label>Moods <input id="editMoods" type="text" placeholder="calm, spacious"></label>
+      <label>Tags <input id="editTags" type="text" placeholder="piano, drums"></label>
+      <div class="split">
+        <label>BPM <input id="editBpm" type="number" min="40" max="240"></label>
+        <label>Key <input id="editKey" type="text"></label>
+        <label>Energy <input id="editEnergy" type="number" min="0" max="100"></label>
+      </div>
+      <label class="check"><input id="editVocals" type="checkbox"> Has vocals</label>
+      <label>Description <textarea id="editDescription" rows="3"></textarea></label>
+      <label>License terms <textarea id="editLicense" rows="3"></textarea></label>
+      <div class="dialog-actions">
+        <button type="button" id="editSave">Save</button>
+        <button type="submit" class="ghost" value="cancel">Close</button>
+      </div>
+    </form>
+  </dialog>
+
+  <div id="toasts"></div>
+  <script src="catalog.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>

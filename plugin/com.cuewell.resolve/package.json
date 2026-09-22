@@ -1,0 +1,7 @@
+{
+  "name": "cuewell",
+  "version": "1.0.0",
+  "private": true,
+  "description": "DaVinci Resolve Studio music library workflow integration.",
+  "main": "main.js"
+}

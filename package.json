@@ -1,0 +1,10 @@
+{
+  "name": "cuewell",
+  "version": "1.0.0",
+  "private": true,
+  "description": "DaVinci Resolve Studio music library panel.",
+  "scripts": {
+    "test": "node --test",
+    "start": "node plugin/com.cuewell.resolve/standalone.js"
+  }
+}

@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<BlackmagicDesign>
+    <Plugin>
+        <Id>com.cuewell.resolve</Id>
+        <Name>Cuewell</Name>
+        <Version>1.0.0</Version>
+        <Description>Search, preview, compare, and license a music library onto the Resolve timeline.</Description>
+        <FilePath>main.js</FilePath>
+    </Plugin>
+</BlackmagicDesign>
